@@ -1,0 +1,286 @@
+---
+title: "CryptoPunks"
+author: "Ethan Haley"
+date: "5/17/2021"
+output:
+  ioslides_presentation: default
+  slidy_presentation: default
+widescreen: yes
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(purrr)
+library(glue)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r introduction}
+christiesPunks <- as.character(c(2, 532, 58, 30, 635, 602, 768, 603, 757))
+```
+ 
+## There are 10,000 CryptoPunks minted on the Ethereum blockchain.
+Each one is a Non-Fungible Token (NFT) representing ownership of a 24 X 24 pixel "portrait" of a Punk.  The creators of the Punks wrote a program that generated them quasi-randomly 4 years ago and promptly gave away 90% of them to anyone who had an Ether wallet and was paying attention.  We have a record of every sales price since then, and in the following slides you'll see an attempt to model those prices, which depend on the wild whims of crypto speculation and high-priced artwork trading, as well as the uncertainty of the nascent world of digital art.  Last week, Christie's Auction House sold 9 of the Punks, which will serve as the ultimate test cases for the model developed here.
+
+```{r out.width='60%', out.height='50%', fig.align='center'}
+include_graphics('https://www.larvalabs.com/public/images/product/cryptopunks/punk-variety-2x.png')
+```
+
+```{r types}
+allTrades <- read_csv('https://raw.githubusercontent.com/ebhtra/cryptopunk-prices/master/allPunkTrades.csv')
+punks <- read_csv('https://raw.githubusercontent.com/ebhtra/cryptopunk-prices/master/punks.csv')
+```
+## How are these categorized? 
+
+```{r}
+group_by(punks, type) %>%
+  ggplot(aes(type)) +
+  geom_bar() + 
+  ggtitle('Very Scarce Zombies, Apes, and Aliens') +
+  theme_bw()
+```
+
+
+## 33 Most Common Attributes
+
+```{r attribs, include=F}
+pa <- read_csv('https://raw.githubusercontent.com/ebhtra/cryptopunk-prices/master/punkAttributes.csv')
+pa$Attribute <- factor(pa$Attribute, levels = pa$Attribute)
+```
+
+
+```{r fig.height=5}
+ggplot(pa[(nrow(pa)-32):(nrow(pa)),], aes(Attribute, `Number of Punks`)) +
+  geom_bar(stat = 'identity') +
+  coord_flip()
+```
+
+
+## 33 Rarest Attributes  
+
+```{r fig.height=5}
+ggplot(pa[1:33,], aes(Attribute, `Number of Punks`)) +
+  geom_bar(stat = 'identity') +
+  coord_flip()
+```
+
+## Does scarcity of an attribute drive up the sales price?  
+#### In general, yes.   But what if a Punk has a beanie (rare) and an earring (common)?
+
+```{r}
+plot(pa$`Number of Punks`, pa$`Avg Sale 90 Days`, xlab = 'Number of Punks with the Attribute', ylab = 'Avg Price of Sales Jan.12-Apr.12')
+```
+
+## Distribution of Number of Attributes per Punk  
+
+```{r}
+numfeats <- rep(0, 10000)
+for (i in 1:10000) {
+  numfeats[i] <- sum(punks[i,3:ncol(punks)])
+}
+hist(numfeats, xlab = 'Number of Attributes', ylab = 'Punks',
+     main = glue('The average per punk is {round(mean(numfeats), 2)}'))
+```
+
+
+## Factors influencing sales prices
+
+- Date of sale
+  - Speculative trends
+  - Price of Ether
+- Punk attributes
+  - Scarcity
+  - Combinations
+- Owner/Seller
+  - The Punk creators kept 10% of them, including the 9 being auctioned.  Perhaps that changes their value. 
+- Artificial pricing.  Insofar as there is a "fair value":
+  - People can sell Punks under fair value, to friends/children etc.
+  - People can buy Punks over fair value, for money laundering, price manipulation etc.  
+
+  
+## 9 Punks at auction:  
+
+```{r out.height='80%', out.width='80%'}
+include_graphics('https://github.com/ebhtra/cryptopunk-prices/blob/master/images/christiesPunksDescrips.png')
+```
+
+```{r dummify, include=F}
+soldPunks <- read_csv('fullPunks.csv')
+sales <- nrow(soldPunks)
+under1000 <- rep(0, sales)
+alien <- rep(0, sales)
+female <- rep(0, sales)
+male <- rep(0, sales)
+zombie <- rep(0, sales)
+ape <- rep(0, sales)
+for (i in 1:sales) {
+  if (str_starts(soldPunks$ID[i], '0')) {under1000[i] <- 1}
+  t <- soldPunks$type[i]
+  if (t == 'alien') {alien[i] <- 1}
+  else if (t == 'female') {female[i] <- 1}
+  else if (t == 'male') {male[i] <- 1}
+  else if (t == 'zombie') {zombie[i] <- 1}
+  else if (t == 'ape') {ape[i] <- 1}
+}
+soldPunks$ape <- ape
+soldPunks$zombie <- zombie
+soldPunks$male <- male
+soldPunks$female <- female
+soldPunks$alien <- alien
+soldPunks$under1000 <- under1000
+```
+
+## Attempt to model the time element 
+
+```{r linear, fig.width=10}
+preMay <- soldPunks %>% filter(date < '2021-05-01')
+ggplot(preMay, aes(as.Date(date), log(ether))) + geom_point(alpha=0.3) + theme_bw() +
+  stat_smooth(method = "lm", se = FALSE, formula = y ~ x) + 
+  labs(x='Date', y='Log(Sales Price in Ether)', title = 'Logarithm of Punk Sales Prices Over Time')
+```
+
+## Residuals provide more evidence 
+#### that Time vs. Price isn't modeled well as a (log-)linear relationship.   
+
+```{r linMod, fig.width=10}
+mod <- lm(log(ether) ~ date, data = preMay)
+plot(mod$fitted.values, mod$residuals, xlab = 'Fitted Values', ylab = 'Residuals')
+lines(c(-3,4), c(0,0))
+```
+
+```{r}
+preAuction <- soldPunks %>% filter(date < '2021-05-11')
+loControl <- loess(log(ether) ~ as.numeric(date), data = preAuction, span = 0.1,
+                   control=loess.control(surface = "direct"))
+loControlPred <- predict(loControl, as.numeric(as.Date('2021-05-11')))
+```
+
+
+
+## Possible remedy:  
+Model the Time-Price relationship with the Loess method, for a better fit, and then instead of fitting "Date" with all the Punk Attributes, just treat its predicted value for each point as another feature affecting the price.  This is sort of like eliminating the time dimension, and just creating a feature for each sale, along the lines of "Average sale price of all Punks for last 90 days."  
+
+```{r fig.width=10, fig.height=4}
+loMod <- loess(log(ether) ~ as.numeric(date), data = preMay, span = 0.1)
+ggplot(preMay, aes(as.Date(date), log(ether))) + geom_point(alpha=0.3) + theme_bw() +
+  geom_smooth(method='loess', formula = y ~ x, span=0.1) + labs(x='', y='Log(Ether price)',
+                                                      title='Linear with Loess')
+```
+
+
+```{r loessPreds}
+loPred <- predict(loMod, as.numeric(soldPunks$date))
+soldPunks$loPred <- loPred
+```
+
+
+```{r}
+# Features were built for sold Punks, since sales price is the response variable.  But now we need to calculate those same predictors for the punks who've never been sold, so as to make predictions for them. (Actually we don't, since soldPunks covers all through May 18, but...)
+neverSold <- punks[!(punks$ID %in% soldPunks$ID), ]
+sales <- nrow(neverSold)
+under1000 <- rep(0, sales)
+alien <- rep(0, sales)
+female <- rep(0, sales)
+male <- rep(0, sales)
+zombie <- rep(0, sales)
+ape <- rep(0, sales)
+for (i in 1:sales) {
+  if (str_starts(neverSold$ID[i], '0')) {under1000[i] <- 1}
+  t <- neverSold$type[i]
+  if (t == 'alien') {alien[i] <- 1}
+  else if (t == 'female') {female[i] <- 1}
+  else if (t == 'male') {male[i] <- 1}
+  else if (t == 'zombie') {zombie[i] <- 1}
+  else if (t == 'ape') {ape[i] <- 1}
+}
+neverSold$ape <- ape
+neverSold$zombie <- zombie
+neverSold$male <- male
+neverSold$female <- female
+neverSold$alien <- alien
+neverSold$under1000 <- under1000
+# Now the only features missing from neverSold Punks are features that result from sales ('date', 'From','ether',....)
+```
+
+```{r}
+preAuction <- soldPunks %>% filter(date < '2021-05-11')
+fitters <- preAuction %>% select(Beanie:loPred)
+fitters$ether <- preAuction$ether
+m <- lm(log(ether) ~ ., fitters)
+summary(m)
+```
+
+## Fit a linear regression model 
+
+```{r fitLM, out.height='90%', out.width='90%'}
+include_graphics('https://github.com/ebhtra/cryptopunk-prices/blob/master/images/explainFirstFitLM.png')
+```
+
+
+
+```{r}
+keepers <- c(4,10,12,26,28,29,33,34,37,42,60,64,65,67,68,71,
+             72,73,74,76,77,78,79,80,84,88,89,90,91,93,94)
+
+m2 <- lm(log(ether) ~ Tiara + `Rosy+Cheeks` + `Silver+Chain` + 
+    `Purple+Hair` + `Gold+Chain` + `Police+Cap` + `Clown+Nose` + 
+    `Blue+Eye+Shadow` + Cap + 
+    `Mohawk+Dark` + Mohawk + `Eye+Patch` + 
+    `Classic+Shades` + `Shadow+Beard` + 
+    `Regular+Shades` + `Horned+Rim+Glasses` + `Big+Shades` + 
+    `Purple+Lipstick` + ape + zombie + male + female + under1000 + 
+    loPred, data = fitters)
+summary(m2)
+```
+
+##  After pruning about 75% of the features...   
+
+```{r finalLM, out.height='75%', out.width='75%'}
+include_graphics('https://github.com/ebhtra/cryptopunk-prices/blob/master/images/explainLMcorrected.png')
+```
+
+```{r}
+for (i in 1:length(christiesPunks)) {
+  christiesPunks[i] <- str_pad(christiesPunks[i], 4, "left", "0")
+}
+```
+
+Since those never sold on the open market (blockchain), we need to attach a date of May 11 to the `neverSold` frame and predict the prices.  
+
+```{r}
+cpdf <- neverSold %>% filter(ID %in% christiesPunks)
+chrisDate <- as.Date('2021-05-11')
+cpdf$loPred <- predict(loControl, as.numeric(chrisDate))
+chrisPreds <- predict(m2, cpdf)
+chrisPreds
+```
+
+## The 9 punks sold as a group.  
+#### Here's the predictions of the linear model, for a batch total price:  
+
+```{r echo=T}
+chrisPreds <- predict(m2, cpdf)
+sum(exp(chrisPreds)) # take exponent of result, since model fits logs
+```
+( 2378 Ether at the time of the auction was worth about $9.9 Million ) 
+
+According to <https://techcrunch.com/2021/05/11/cryptopunks-nft-bundle-goes-for-17-million-in-christies-auction/>:
+"The final Christie’s bid was for $14.5 million, $16.96 million after fees.
+Many inside the crypto community had expected the sale to reach an even higher premium in recent weeks, 
+something that had led to a substantial run-up in prices of CryptoPunks in the weeks ahead of the auction. 
+Though the lot sold for a significantly higher dollar amount, when priced in denominations of the surging 
+Ethereum cryptocurrency, the entire bundle sold for slightly less than the sale price of the last alien figure, 
+which sold in March for 4,200 Eth (some $7.2M USD at the time)."  
+
+## Final thoughts:
+
+ - It's interesting that amidst an Ethereum frenzy, the sentiment was one of slight disappointment 
+in the NFT world after an auction that sold for 50% higher than predicted by the model we just looked at. 
+ - In case you're thinking "Wouldn't it make more sense to model sales in USD?", you're right!  I ran the same model but with USD as the response variable, and though the coefficients were very similar, the R-squared was .963 (vs .928 using Ether).   The predicted price for the Christie's lot was 10.45M.  
+ - Why is this work important?  Honestly, I don't think it is, at least as far as predicting prices for artwork.  Even if there were a "fair price", it's just spare money changing hands.  If you really want to nail the modeling part of this, you're either going to get lucky or be disappointed.  There's currently no way to model something so unpredictable.  
+ - Nevertheless, attempts like this are important in their own right, as a means of trying to understand things that are as meaningless as a CryptoPunk today, but may end up pertaining to more critical things tomorrow.  
+ 
+ 
